@@ -1,0 +1,18 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: inventory-service
+  datasource:
+    url: jdbc:h2:mem:inventorydb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update # auto create table from Entity (only use when dev)
+    show-sql: true
+  h2:
+    console:
+      enabled: true # Display UI to view DB on console/h2-console
