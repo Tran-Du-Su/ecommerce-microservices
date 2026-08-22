@@ -1,0 +1,67 @@
+# ==========================================================================
+# .gitignore dùng chung cho toàn monorepo.
+# Quy tắc: đặt ở GỐC, không lặp lại trong từng service.
+# Chỉ tạo .gitignore con khi service đó có thứ ĐẶC THÙ cần bỏ qua.
+# ==========================================================================
+
+### Build output ###
+# Không bao giờ commit thứ có thể sinh lại từ source.
+target/
+build/
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### Maven Wrapper ###
+# mvnw, mvnw.cmd và maven-wrapper.properties PHẢI được commit — chúng đảm bảo
+# mọi người (và CI) build bằng ĐÚNG một phiên bản Maven. Chỉ file .jar là bỏ qua,
+# vì Maven 3.9+ tự tải về từ .properties.
+.mvn/wrapper/maven-wrapper.jar
+
+### IDE — IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### IDE — Eclipse / STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IDE — VS Code ###
+.vscode/
+
+### OS ###
+.DS_Store
+Thumbs.db
+desktop.ini
+
+### Log ###
+*.log
+logs/
+
+### BÍ MẬT — tuyệt đối không commit ###
+# Đã lên git là coi như lộ vĩnh viễn: xoá ở commit sau vẫn còn trong lịch sử.
+.env
+.env.*
+!.env.example
+application-local.yaml
+application-local.yml
+application-secret*.yaml
+application-secret*.yml
+*.p12
+*.jks
+*.pem
+*.key
+
+### Spring Initializr ###
+HELP.md
+
+### Tài liệu mentor — riêng tư, không đưa lên GitHub ###
+# Chứa ngữ cảnh kèm cặp/tiến độ học tập cá nhân, không phải sản phẩm để show ra ngoài.
+/CLAUDE.md
+/docs/

@@ -1,0 +1,27 @@
+# ==========================================================================
+# Chuẩn hoá line ending. Em code trên Windows (CRLF), CI/Docker chạy Linux (LF).
+# Không có file này, sẽ có ngày cả file bị đánh dấu "đã thay đổi" chỉ vì
+# ký tự xuống dòng, và script shell sẽ lỗi "bad interpreter: ^M".
+# ==========================================================================
+
+# Mặc định: Git tự nhận diện file text, LUÔN lưu LF trong repo.
+* text=auto eol=lf
+
+# Script Windows bắt buộc CRLF mới chạy được.
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+
+# Script Unix bắt buộc LF (mvnw chạy trên CI Linux).
+mvnw       text eol=lf
+*.sh       text eol=lf
+Dockerfile text eol=lf
+
+# File nhị phân: Git không được đụng vào.
+*.jar   binary
+*.war   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
