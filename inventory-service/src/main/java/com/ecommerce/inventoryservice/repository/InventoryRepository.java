@@ -10,24 +10,26 @@ import java.util.List;
 import java.util.Optional;
 
 public interface InventoryRepository extends JpaRepository<Inventory, Long> {
-    Optional<Inventory> findByProductId(Long productId);
+  Optional<Inventory> findByProductId(Long productId);
 
-    List<Inventory> findByProductIdIn(List<Long> productIds);
+  List<Inventory> findByProductIdIn(List<Long> productIds);
 
-    boolean existsByProductId(Long productId);
+  boolean existsByProductId(Long productId);
 
-    /**
-     * Trừ tồn kho NGUYÊN TỬ: đọc - so sánh - ghi gộp trong MỘT câu UPDATE,
-     * nên không tồn tại khoảng trống để request khác chen vào (lost update).
-     * Mệnh đề `quantity >= :quantity` là vế "compare" của compare-and-swap;
-     * số dòng trả về là tín hiệu: 1 = trừ thành công, 0 = không đủ hàng.
-     */
-    @Modifying(clearAutomatically = true, flushAutomatically = true)
-    @Query("""
-            UPDATE Inventory i
-               SET i.quantity = i.quantity - :quantity
-             WHERE i.productId = :productId
-               AND i.quantity >= :quantity
-            """)
-    int decreaseQuantity(@Param("productId") Long productId, @Param("quantity") Long quantity);
+  /**
+   * ATOMIC inventory subtraction: reads - compares - updates in ONE UPDATE
+   * statement,
+   * so there is no gap for another request to slip in (lost update).
+   * The `quantity >= :quantity` clause is the "compare" part of compare-and-swap;
+   * the number of rows returned is the signal: 1 = subtraction successful,
+   * 0 = insufficient stock.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("""
+      UPDATE Inventory i
+         SET i.quantity = i.quantity - :quantity
+       WHERE i.productId = :productId
+         AND i.quantity >= :quantity
+      """)
+  int decreaseQuantity(@Param("productId") Long productId, @Param("quantity") Long quantity);
 }

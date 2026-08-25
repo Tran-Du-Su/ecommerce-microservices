@@ -4,8 +4,8 @@ import jakarta.persistence.*;
 import lombok.*;
 
 @Entity
-// Unique constraint là chốt chặn cuối cùng: chỉ tầng DB mới chặn được hai request
-// tạo tồn kho cho cùng một productId ở cùng thời điểm.
+// Unique constraint is the last resort: only the DB layer can prevent two
+// requests from creating inventory for the same productId at the same time.
 @Table(name = "inventories", uniqueConstraints = @UniqueConstraint(name = "uk_inventories_product_id", columnNames = "product_id"))
 @Getter
 @Setter

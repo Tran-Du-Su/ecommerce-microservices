@@ -27,7 +27,8 @@ public class InventoryService {
 
     // create inventory
     public InventoryResponse createInventory(InventoryRequest request) {
-        // Chặn từ tầng nghiệp vụ để trả 409 tử tế; unique constraint dưới DB là chốt chặn
+        // Chặn từ tầng nghiệp vụ để trả 409 tử tế; unique constraint dưới DB là chốt
+        // chặn
         // cuối cùng cho trường hợp hai request tạo cùng lúc.
         if (inventoryRepository.existsByProductId(request.productId())) {
             throw new InventoryAlreadyExistsException(request.productId());
@@ -81,16 +82,22 @@ public class InventoryService {
     }
 
     /**
-     * Trừ tồn kho cho cả đơn hàng.
+     * Subtract inventory for the entire order.
      *
-     * Mỗi item được trừ bằng MỘT câu UPDATE có điều kiện (compare-and-swap ở tầng DB),
-     * nên không còn lost update như bản đọc-sửa-ghi trước đây.
+     * Each item is subtracted using ONE conditional UPDATE statement
+     * (compare-and-swap at
+     * the DB layer), so there is no lost update like in the previous
+     * read-modify-write
+     * version.
      *
-     * Sắp xếp theo productId trước khi lặp: hai đơn hàng đụng cùng một tập sản phẩm sẽ
-     * lấy row lock theo CÙNG một thứ tự, tránh deadlock kiểu A-chờ-B / B-chờ-A.
+     * Sort by productId before looping: two orders that conflict with the same set
+     * of
+     * products will take row locks in the SAME order, avoiding deadlock like
+     * A-waiting-for-B /
+     * B-waiting-for-A.
      *
-     * @Transactional để nếu item thứ N hết hàng thì các item đã trừ trước đó được
-     * rollback — tồn kho không bị trừ một nửa.
+     * @Transactional to rollback previous items if the Nth item is out of stock —
+     *                inventory is not subtracted halfway.
      */
     @Transactional
     public void decreaseInventory(List<StockCheckItem> stockCheckItems) {
@@ -99,7 +106,7 @@ public class InventoryService {
                 .forEach(item -> {
                     int updated = inventoryRepository.decreaseQuantity(item.productId(), item.quantity());
 
-                    // 0 dòng bị ảnh hưởng = không đủ tồn (hoặc không có bản ghi tồn kho)
+                    // 0 rows affected = insufficient stock (or no inventory record)
                     if (updated == 0) {
                         throw new OutOfStockException(item.productId());
                     }

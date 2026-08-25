@@ -35,9 +35,9 @@ public class OrderService {
         private final ProductClient productClient;
         private final InventoryClient inventoryClient;
 
-        // không dùng @Transactional
-        // vì transaction DB cục bộ không thể rollback thay đổi ở service khác;
-        // giải pháp đúng là Saga, không phải 2PC
+        // Do not use @Transactional because a local database transaction cannot roll
+        // back changes in another service;
+        // the correct solution is Saga, not 2PC.
         public OrderResponse createOrder(OrderRequest request) {
                 // 1. get products
                 List<Long> ids = request.items()

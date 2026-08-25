@@ -6,13 +6,10 @@ import jakarta.validation.constraints.Positive;
 
 import java.math.BigDecimal;
 
-public record ProductRequest (
-    @NotBlank(message = "Tên sản phẩm không được để trống")
-    String name,
+public record ProductRequest(
+        @NotBlank(message = "Product name cannot be empty") String name,
 
-    String description,
+        String description,
 
-    @NotNull(message = "Giá không được để trống")
-    @Positive(message = "Giá phải lớn hơn 0")
-    BigDecimal price
-) {}
+        @NotNull(message = "Price cannot be empty") @Positive(message = "Price must be greater than 0") BigDecimal price) {
+}
