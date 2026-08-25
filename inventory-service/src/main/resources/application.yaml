@@ -13,6 +13,7 @@ spring:
     hibernate:
       ddl-auto: update # auto create table from Entity (only use when dev)
     show-sql: true
+    open-in-view: false
   h2:
     console:
       enabled: true # Display UI to view DB on console/h2-console
