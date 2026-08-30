@@ -4,6 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import com.ecommerce.inventoryservice.entity.Inventory;
 import java.util.List;
@@ -24,6 +25,7 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
    * the number of rows returned is the signal: 1 = subtraction successful,
    * 0 = insufficient stock.
    */
+  @Transactional
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query("""
       UPDATE Inventory i
