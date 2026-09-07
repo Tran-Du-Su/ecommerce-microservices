@@ -36,6 +36,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(FeignException.class)
     public ResponseEntity<Map<String, Object>> handlerFeignClientException(FeignException ex) {
+        // downstream service error -> 400-499
         if (ex.status() >= 400 && ex.status() < 500) {
             return ResponseEntity.status(ex.status()).body(Map.of(
                     "timestamp", Instant.now().toString(),
@@ -43,6 +44,7 @@ public class GlobalExceptionHandler {
                     "error", "Downstream Error",
                     "message", "Request rejected by a dependent service: " + ex.getMessage()));
         }
+        // 5xx error -> downstream unavailable
         Map<String, Object> body = Map.of(
                 "timestamp", Instant.now().toString(),
                 "status", 503,

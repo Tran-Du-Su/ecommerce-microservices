@@ -35,8 +35,8 @@ public class OrderService {
         private final ProductClient productClient;
         private final InventoryClient inventoryClient;
 
-        // Do not use @Transactional because a local database transaction cannot roll
-        // back changes in another service;
+        // Do not use @Transactional because a local database transaction cannot
+        // rollback changes in another service;
         // the correct solution is Saga, not 2PC.
         public OrderResponse createOrder(OrderRequest request) {
                 // 1. get products

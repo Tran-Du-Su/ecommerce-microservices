@@ -26,6 +26,13 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
    * 0 = insufficient stock.
    */
   @Transactional
+  // Ensure that any prior Java-level modifications are first synchronized to the
+  // database;
+  // this guarantees that the direct UPDATE statement executed via @Query operates
+  // on the most accurate data state.
+
+  // Clear the cache completely after the update is finished to ensure that
+  // subsequent SELECT statements do not read stale data remaining in the cache.
   @Modifying(clearAutomatically = true, flushAutomatically = true)
   @Query("""
       UPDATE Inventory i
