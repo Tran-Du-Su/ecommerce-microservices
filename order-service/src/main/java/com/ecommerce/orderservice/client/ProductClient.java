@@ -8,7 +8,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import com.ecommerce.orderservice.dto.ProductResponse;
 
-@FeignClient(name = "product-service", url = "${services.product-service.url}", path = "/api/products")
+// Use load balancer (Eureka) to find the product-service
+// name must match the application name in product-service
+@FeignClient(name = "product-service", path = "/api/products")
 public interface ProductClient {
 
     @GetMapping("/{id}")

@@ -6,7 +6,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import com.ecommerce.orderservice.dto.StockCheckRequest;
 import com.ecommerce.orderservice.dto.StockShortage;
 
-@FeignClient(name = "inventory-service", url = "${services.inventory-service.url}", path = "/api/inventory")
+// Use load balancer (Eureka) to find the inventory-service
+// name must match the application name in inventory-service
+@FeignClient(name = "inventory-service", path = "/api/inventory")
 public interface InventoryClient {
 
         @PostMapping("/check")
