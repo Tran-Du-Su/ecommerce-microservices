@@ -2,10 +2,12 @@ package com.ecommerce.orderservice.service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
-import com.ecommerce.orderservice.client.ProductClient;
+import com.ecommerce.orderservice.client.ProductServiceGateway;
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.dto.OrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
@@ -20,7 +22,8 @@ import com.ecommerce.orderservice.entity.OrderItem;
 import com.ecommerce.orderservice.exception.OutOfStockException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
 import com.ecommerce.orderservice.repository.OrderRepository;
-import com.ecommerce.orderservice.client.InventoryClient;
+import com.ecommerce.orderservice.client.InventoryServiceGateway;
+
 import lombok.RequiredArgsConstructor;
 
 import java.math.BigDecimal;
@@ -32,8 +35,8 @@ import java.util.ArrayList;
 public class OrderService {
 
         private final OrderRepository orderRepository;
-        private final ProductClient productClient;
-        private final InventoryClient inventoryClient;
+        private final ProductServiceGateway productClient;
+        private final InventoryServiceGateway inventoryClient;
 
         // Do not use @Transactional because a local database transaction cannot
         // rollback changes in another service;
@@ -45,7 +48,7 @@ public class OrderService {
                                 .map(OrderItemRequest::productId)
                                 .toList();
 
-                Map<Long, ProductResponse> products = productClient.getProductsByProductIds(ids)
+                Map<Long, ProductResponse> products = await(productClient.getProductsByProductIds(ids))
                                 .stream()
                                 .collect(Collectors.toMap(ProductResponse::id, p -> p));
 
@@ -68,8 +71,8 @@ public class OrderService {
                 List<StockCheckItem> stockCheckItems = request.items().stream()
                                 .map(item -> new StockCheckItem(item.productId(), item.quantity()))
                                 .collect(Collectors.toList());
-                List<StockShortage> stockShortages = inventoryClient
-                                .checkInventory(new StockCheckRequest(stockCheckItems));
+                List<StockShortage> stockShortages = await(inventoryClient
+                                .checkInventory(new StockCheckRequest(stockCheckItems)));
                 if (!stockShortages.isEmpty()) {
                         throw new OutOfStockException(stockShortages.stream().map(s -> s.productId()).toList());
                 }
@@ -93,7 +96,7 @@ public class OrderService {
                 Order saved = orderRepository.save(order);
 
                 // update Inventory
-                updateInventory(stockCheckItems);
+                await(inventoryClient.decreaseInventory(new StockCheckRequest(stockCheckItems)));
 
                 return toResponse(saved);
         }
@@ -104,12 +107,6 @@ public class OrderService {
                                 .stream()
                                 .map(this::toResponse)
                                 .toList();
-        }
-
-        // TODO: saga
-        // update Inventory
-        private void updateInventory(List<StockCheckItem> stockCheckItems) {
-                inventoryClient.decreaseInventory(new StockCheckRequest(stockCheckItems));
         }
 
         // mapping entity -> dto response
@@ -130,6 +127,28 @@ public class OrderService {
                                 order.getTotalAmount(),
                                 order.getStatus(),
                                 itemResponses);
+        }
+
+        /**
+         * Helper method to await a CompletableFuture and unwrap CompletionException
+         * 
+         * @param future
+         * @return T result
+         * @throws T cause if the future completes with an exception
+         */
+        private <T> T await(CompletableFuture<T> future) {
+                try {
+                        // join() is a blocking call, so we need to catch CompletionException
+                        return future.join();
+                } catch (CompletionException e) {
+                        // CompletionException is a checked exception, so we need to catch it
+                        // and unwrap the cause
+                        if (e.getCause() instanceof RuntimeException re) {
+                                throw re;
+                        }
+                        // if the cause is not a RuntimeException, rethrow it as a RuntimeException
+                        throw new RuntimeException(e);
+                }
         }
 
 }
