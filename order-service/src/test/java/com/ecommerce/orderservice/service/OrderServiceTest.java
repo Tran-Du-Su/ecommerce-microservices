@@ -9,15 +9,16 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import com.ecommerce.orderservice.client.InventoryClient;
-import com.ecommerce.orderservice.client.ProductClient;
+import com.ecommerce.orderservice.client.InventoryServiceGateway;
+import com.ecommerce.orderservice.client.ProductServiceGateway;
 import com.ecommerce.orderservice.dto.OrderItemRequest;
 import com.ecommerce.orderservice.dto.OrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
@@ -26,6 +27,7 @@ import com.ecommerce.orderservice.dto.StockShortage;
 import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.exception.OutOfStockException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
+import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.repository.OrderRepository;
 
 // Test By Mockito
@@ -36,13 +38,16 @@ class OrderServiceTest {
     @Mock
     private OrderRepository orderRepository;
     @Mock
-    private ProductClient productClient;
+    private ProductServiceGateway productGateway;
     @Mock
-    private InventoryClient inventoryClient;
+    private InventoryServiceGateway inventoryGateway;
 
-    // Instance object will be tested
-    @InjectMocks
     private OrderService orderService;
+
+    @BeforeEach
+    void setUp() {
+        orderService = new OrderService(orderRepository, productGateway, inventoryGateway);
+    }
 
     // Unit test create order
     @Test
@@ -53,10 +58,11 @@ class OrderServiceTest {
         ProductResponse product = new ProductResponse(100L, "Mouse", "Logitech", BigDecimal.valueOf(500_000));
 
         // stub / mock behavior get product
-        when(productClient.getProductsByProductIds(List.of(100L))).thenReturn(List.of(product));
+        when(productGateway.getProductsByProductIds(List.of(100L)))
+                .thenReturn(CompletableFuture.completedFuture(List.of(product)));
 
         // stub / mock behavior check inventory
-        when(inventoryClient.checkInventory(any())).thenReturn(List.of());
+        when(inventoryGateway.checkInventory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
 
         // stub / mock behavior save order
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
@@ -75,19 +81,20 @@ class OrderServiceTest {
         assertThat(response.items().get(0).productName()).isEqualTo("Mouse");
 
         // verify behavior
-        verify(inventoryClient).decreaseInventory(any());
+        verify(inventoryGateway).decreaseInventory(any());
     }
 
     @Test
     void createOrder_shouldThrow_whenProductNotFound() {
         OrderRequest request = new OrderRequest(1L, List.of(new OrderItemRequest(999L, 1L)));
 
-        when(productClient.getProductsByProductIds(List.of(999L))).thenReturn(List.of());
+        when(productGateway.getProductsByProductIds(List.of(999L)))
+                .thenReturn(CompletableFuture.completedFuture(List.of()));
 
         assertThatThrownBy(() -> orderService.createOrder(request)).isInstanceOf(ProductNotFoundException.class);
 
         verify(orderRepository, never()).save(any());
-        verify(inventoryClient, never()).decreaseInventory(any());
+        verify(inventoryGateway, never()).decreaseInventory(any());
     }
 
     @Test
@@ -98,17 +105,35 @@ class OrderServiceTest {
         ProductResponse product = new ProductResponse(100L, "Mouse", "Logitech", BigDecimal.valueOf(500_000));
 
         // mock data product
-        when(productClient.getProductsByProductIds(List.of(100L))).thenReturn(List.of(product));
+        when(productGateway.getProductsByProductIds(List.of(100L)))
+                .thenReturn(CompletableFuture.completedFuture(List.of(product)));
 
         // mock data inventory
-        when(inventoryClient.checkInventory(any())).thenReturn(List.of(new StockShortage(100L, 2L, 1L)));
+        when(inventoryGateway.checkInventory(any()))
+                .thenReturn(CompletableFuture.completedFuture(List.of(new StockShortage(100L, 2L, 1L))));
 
         // Action and Assert
         assertThatThrownBy(() -> orderService.createOrder(request)).isInstanceOf(OutOfStockException.class);
 
         // verify behavior
         verify(orderRepository, never()).save(any());
-        verify(inventoryClient, never()).decreaseInventory(any());
+        verify(inventoryGateway, never()).decreaseInventory(any());
+    }
+
+    @Test
+    void createOrder_shouldThrowServiceUnavailable_whenProductServiceDown() {
+        // Arrange
+        OrderRequest request = new OrderRequest(1L, List.of(new OrderItemRequest(100L, 2L)));
+
+        // mock data product
+        when(productGateway.getProductsByProductIds(List.of(100L)))
+                .thenReturn(CompletableFuture.failedFuture(new ServiceUnavailableException("product-service", null)));
+
+        // Action and Assert
+        assertThatThrownBy(() -> orderService.createOrder(request)).isInstanceOf(ServiceUnavailableException.class);
+
+        // verify behavior
+        verify(orderRepository, never()).save(any());
     }
 
 }
