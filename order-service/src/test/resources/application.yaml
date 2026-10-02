@@ -1,0 +1,9 @@
+spring:
+  application:
+    name: order-service
+  cloud:
+    config:
+      enabled: false
+eureka:
+  client:
+    enabled: false
