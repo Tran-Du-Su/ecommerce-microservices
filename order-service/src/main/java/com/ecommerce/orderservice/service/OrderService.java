@@ -35,8 +35,8 @@ import java.util.ArrayList;
 public class OrderService {
 
         private final OrderRepository orderRepository;
-        private final ProductServiceGateway productClient;
-        private final InventoryServiceGateway inventoryClient;
+        private final ProductServiceGateway productGateway;
+        private final InventoryServiceGateway inventoryGateway;
 
         // Do not use @Transactional because a local database transaction cannot
         // rollback changes in another service;
@@ -48,7 +48,7 @@ public class OrderService {
                                 .map(OrderItemRequest::productId)
                                 .toList();
 
-                Map<Long, ProductResponse> products = await(productClient.getProductsByProductIds(ids))
+                Map<Long, ProductResponse> products = await(productGateway.getProductsByProductIds(ids))
                                 .stream()
                                 .collect(Collectors.toMap(ProductResponse::id, p -> p));
 
@@ -71,7 +71,7 @@ public class OrderService {
                 List<StockCheckItem> stockCheckItems = request.items().stream()
                                 .map(item -> new StockCheckItem(item.productId(), item.quantity()))
                                 .collect(Collectors.toList());
-                List<StockShortage> stockShortages = await(inventoryClient
+                List<StockShortage> stockShortages = await(inventoryGateway
                                 .checkInventory(new StockCheckRequest(stockCheckItems)));
                 if (!stockShortages.isEmpty()) {
                         throw new OutOfStockException(stockShortages.stream().map(s -> s.productId()).toList());
@@ -96,7 +96,7 @@ public class OrderService {
                 Order saved = orderRepository.save(order);
 
                 // update Inventory
-                await(inventoryClient.decreaseInventory(new StockCheckRequest(stockCheckItems)));
+                await(inventoryGateway.decreaseInventory(new StockCheckRequest(stockCheckItems)));
 
                 return toResponse(saved);
         }
