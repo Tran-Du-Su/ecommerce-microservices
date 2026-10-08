@@ -36,7 +36,7 @@ public class PaymentTest {
                                 "USD", Instant.now());
                 payment.markSuccess("transactionId", Instant.now());
 
-                assertThatThrownBy(() -> payment.markFailed("failureReason", Instant.now()))
+                assertThatThrownBy(() -> payment.markFailed("transactionId", "failureReason", Instant.now()))
                                 .isInstanceOf(IllegalStateException.class);
         }
 

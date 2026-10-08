@@ -1,6 +1,7 @@
 package com.ecommerce.paymentservice.entity;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 
 import com.ecommerce.paymentservice.domain.PaymentMethod;
@@ -76,7 +77,7 @@ public class Payment {
         payment.idempotencyKey = idempotencyKey;
         payment.orderId = orderId;
         payment.paymentMethod = method;
-        payment.amount = amount;
+        payment.amount = amount.setScale(2, RoundingMode.UNNECESSARY);
         payment.currency = currency;
         payment.status = PaymentStatus.PENDING;
         payment.createdAt = createdAt;
@@ -100,10 +101,11 @@ public class Payment {
     /**
      * Marks payment as failed.
      */
-    public void markFailed(String failureReason, Instant processedAt) {
+    public void markFailed(String transactionId, String failureReason, Instant processedAt) {
         if (this.status != PaymentStatus.PENDING) {
             throw new IllegalStateException("Payment must be in state PENDING to be failed");
         }
+        this.transactionId = transactionId;
         this.failureReason = failureReason;
         this.processedAt = processedAt;
         this.status = PaymentStatus.FAILED;
