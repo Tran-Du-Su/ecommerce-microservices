@@ -58,7 +58,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Map<String, Object>> handlerMethodArgumentNotValid(MethodArgumentNotValidException ex) {
         Map<String, Object> errors = ex.getBindingResult().getFieldErrors()
                 .stream()
-                .collect(java.util.stream.Collectors.toMap(f -> f.getField(), f -> f.getDefaultMessage()));
+                .collect(java.util.stream.Collectors.toMap(f -> f.getField(), f -> f.getDefaultMessage(),
+                        (existing, replacement) -> existing));
 
         Map<String, Object> body = Map.of(
                 "timestamp", Instant.now().toString(),
