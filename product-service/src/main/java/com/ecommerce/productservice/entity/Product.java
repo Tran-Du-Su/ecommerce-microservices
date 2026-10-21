@@ -24,4 +24,13 @@ public class Product {
 
     @Column(nullable = false)
     private BigDecimal price;
+
+    /**
+     * Optimistic lock and event version in one: incremented by Hibernate on every update, so
+     * consumers of {@code ProductChangedEvent} can discard stale or duplicate events.
+     */
+    @Version
+    @Setter(AccessLevel.NONE)
+    @Column(nullable = false)
+    private Long version;
 }
