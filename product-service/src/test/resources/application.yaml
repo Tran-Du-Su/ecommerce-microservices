@@ -7,3 +7,7 @@ spring:
 eureka:
   client:
     enabled: false
+# No broker in unit/slice tests: don't try to create topics or run the relay.
+# Kafka integration tests re-enable both against an embedded broker.
+spring.kafka.admin.auto-create: false
+outbox.relay.enabled: false
