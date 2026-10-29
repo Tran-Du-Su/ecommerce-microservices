@@ -65,3 +65,6 @@ HELP.md
 # Chứa ngữ cảnh kèm cặp/tiến độ học tập cá nhân, không phải sản phẩm để show ra ngoài.
 /CLAUDE.md
 /docs/
+
+# Project skills for the private mentoring setup (same reason as /docs/)
+/.claude/skills/
