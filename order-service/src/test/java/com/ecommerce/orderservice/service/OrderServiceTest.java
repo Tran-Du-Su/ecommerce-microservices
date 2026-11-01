@@ -12,6 +12,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +29,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.ecommerce.orderservice.client.InventoryServiceGateway;
 import com.ecommerce.orderservice.client.PaymentServiceGateway;
-import com.ecommerce.orderservice.client.ProductServiceGateway;
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.domain.PaymentStatus;
 import com.ecommerce.orderservice.dto.OrderItemRequest;
@@ -36,13 +36,15 @@ import com.ecommerce.orderservice.dto.OrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
 import com.ecommerce.orderservice.dto.PaymentRequest;
 import com.ecommerce.orderservice.dto.PaymentResponse;
-import com.ecommerce.orderservice.dto.ProductResponse;
 import com.ecommerce.orderservice.dto.StockShortage;
 import com.ecommerce.orderservice.entity.Order;
+import com.ecommerce.orderservice.entity.ProductView;
+import com.ecommerce.orderservice.event.ProductChangedEvent;
 import com.ecommerce.orderservice.exception.OutOfStockException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
 import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.repository.OrderRepository;
+import com.ecommerce.orderservice.repository.ProductViewRepository;
 
 import feign.FeignException;
 import feign.Request;
@@ -57,7 +59,7 @@ class OrderServiceTest {
     @Mock
     private OrderRepository orderRepository;
     @Mock
-    private ProductServiceGateway productGateway;
+    private ProductViewRepository productViewRepository;
     @Mock
     private InventoryServiceGateway inventoryGateway;
     @Mock
@@ -67,7 +69,7 @@ class OrderServiceTest {
 
     @BeforeEach
     void setUp() {
-        orderService = new OrderService(orderRepository, productGateway, inventoryGateway, paymentGateway);
+        orderService = new OrderService(orderRepository, productViewRepository, inventoryGateway, paymentGateway);
     }
 
     /** Tests that reach the payment step: products found, stock available, stock decreased. */
@@ -76,8 +78,7 @@ class OrderServiceTest {
 
         @BeforeEach
         void stubStepsBeforePayment() {
-            when(productGateway.getProductsByProductIds(List.of(PRODUCT_ID)))
-                    .thenReturn(CompletableFuture.completedFuture(List.of(mouse())));
+            when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
             when(inventoryGateway.checkInventory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
             when(inventoryGateway.decreaseInventory(any())).thenReturn(CompletableFuture.completedFuture(null));
             when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
@@ -161,8 +162,20 @@ class OrderServiceTest {
 
     @Test
     void createOrder_shouldNotSaveOrCharge_whenProductNotFound() {
-        when(productGateway.getProductsByProductIds(List.of(PRODUCT_ID)))
-                .thenReturn(CompletableFuture.completedFuture(List.of()));
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of());
+
+        assertThatThrownBy(() -> orderService.createOrder(request())).isInstanceOf(ProductNotFoundException.class);
+
+        verify(orderRepository, never()).save(any());
+        verify(paymentGateway, never()).pay(anyString(), any());
+    }
+
+    @Test
+    void createOrder_shouldNotSaveOrCharge_whenProductDeleted() {
+        // The view keeps deleted products (soft delete), so findAllById still returns the row
+        ProductView deleted = mouse();
+        deleted.apply(new ProductChangedEvent(PRODUCT_ID, null, null, 2L, true, Instant.now()));
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(deleted));
 
         assertThatThrownBy(() -> orderService.createOrder(request())).isInstanceOf(ProductNotFoundException.class);
 
@@ -172,8 +185,7 @@ class OrderServiceTest {
 
     @Test
     void createOrder_shouldNotSaveOrCharge_whenOutOfStock() {
-        when(productGateway.getProductsByProductIds(List.of(PRODUCT_ID)))
-                .thenReturn(CompletableFuture.completedFuture(List.of(mouse())));
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
         when(inventoryGateway.checkInventory(any()))
                 .thenReturn(CompletableFuture.completedFuture(List.of(new StockShortage(PRODUCT_ID, 2L, 1L))));
 
@@ -185,20 +197,8 @@ class OrderServiceTest {
     }
 
     @Test
-    void createOrder_shouldThrowServiceUnavailable_whenProductServiceDown() {
-        when(productGateway.getProductsByProductIds(List.of(PRODUCT_ID))).thenReturn(
-                CompletableFuture.failedFuture(new ServiceUnavailableException("product-service", null)));
-
-        assertThatThrownBy(() -> orderService.createOrder(request()))
-                .isInstanceOf(ServiceUnavailableException.class);
-
-        verify(orderRepository, never()).save(any());
-    }
-
-    @Test
     void createOrder_shouldNotCharge_whenStockDecreaseFails() {
-        when(productGateway.getProductsByProductIds(List.of(PRODUCT_ID)))
-                .thenReturn(CompletableFuture.completedFuture(List.of(mouse())));
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
         when(inventoryGateway.checkInventory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
         when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(inventoryGateway.decreaseInventory(any())).thenReturn(
@@ -215,8 +215,9 @@ class OrderServiceTest {
         return new OrderRequest(1L, List.of(new OrderItemRequest(PRODUCT_ID, 2L)), "MOMO", "TOKEN_OK");
     }
 
-    private ProductResponse mouse() {
-        return new ProductResponse(PRODUCT_ID, "Mouse", "Logitech", BigDecimal.valueOf(500_000));
+    private ProductView mouse() {
+        return ProductView.from(new ProductChangedEvent(PRODUCT_ID, "Mouse", BigDecimal.valueOf(500_000), 1L, false,
+                Instant.now()));
     }
 
     private CompletableFuture<PaymentResponse> paid(PaymentStatus status) {

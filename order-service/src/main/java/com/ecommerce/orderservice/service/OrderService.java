@@ -7,21 +7,21 @@ import java.util.concurrent.CompletionException;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
-import com.ecommerce.orderservice.client.ProductServiceGateway;
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.dto.OrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
 import com.ecommerce.orderservice.dto.OrderItemRequest;
 import com.ecommerce.orderservice.dto.OrderItemResponse;
-import com.ecommerce.orderservice.dto.ProductResponse;
 import com.ecommerce.orderservice.dto.StockCheckItem;
 import com.ecommerce.orderservice.dto.StockCheckRequest;
 import com.ecommerce.orderservice.dto.StockShortage;
 import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.entity.OrderItem;
+import com.ecommerce.orderservice.entity.ProductView;
 import com.ecommerce.orderservice.exception.OutOfStockException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
 import com.ecommerce.orderservice.repository.OrderRepository;
+import com.ecommerce.orderservice.repository.ProductViewRepository;
 import com.ecommerce.orderservice.client.InventoryServiceGateway;
 import com.ecommerce.orderservice.client.PaymentServiceGateway;
 import com.ecommerce.orderservice.dto.PaymentRequest;
@@ -45,7 +45,7 @@ public class OrderService {
         private static final String CURRENCY = "VND";
 
         private final OrderRepository orderRepository;
-        private final ProductServiceGateway productGateway;
+        private final ProductViewRepository productViewRepository;
         private final InventoryServiceGateway inventoryGateway;
         private final PaymentServiceGateway paymentGateway;
 
@@ -71,21 +71,22 @@ public class OrderService {
                                 .map(OrderItemRequest::productId)
                                 .toList();
 
-                Map<Long, ProductResponse> products = await(productGateway.getProductsByProductIds(ids))
+                // Local read model fed by Kafka: no call to product-service at order time
+                Map<Long, ProductView> products = productViewRepository.findAllById(ids)
                                 .stream()
-                                .collect(Collectors.toMap(ProductResponse::id, p -> p));
+                                .collect(Collectors.toMap(ProductView::getProductId, p -> p));
 
                 List<OrderItem> items = new ArrayList<>();
                 for (OrderItemRequest req : request.items()) {
-                        ProductResponse product = products.get(req.productId());
+                        ProductView product = products.get(req.productId());
 
-                        if (product == null)
+                        if (product == null || product.isDeleted())
                                 throw new ProductNotFoundException(req.productId());
 
                         items.add(OrderItem.builder()
-                                        .productId(product.id())
-                                        .productName(product.name()) // snapshot value
-                                        .unitPrice(product.price()) // snapshot value
+                                        .productId(product.getProductId())
+                                        .productName(product.getName()) // snapshot value
+                                        .unitPrice(product.getPrice()) // snapshot value
                                         .quantity(req.quantity())
                                         .build());
                 }
