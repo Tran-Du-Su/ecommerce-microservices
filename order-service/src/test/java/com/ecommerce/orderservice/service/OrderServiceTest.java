@@ -41,6 +41,7 @@ import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.entity.ProductView;
 import com.ecommerce.orderservice.event.ProductChangedEvent;
 import com.ecommerce.orderservice.exception.OutOfStockException;
+import com.ecommerce.orderservice.exception.PriceChangedException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
 import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.repository.OrderRepository;
@@ -184,6 +185,19 @@ class OrderServiceTest {
     }
 
     @Test
+    void createOrder_shouldRejectBeforeAnyRemoteCall_whenPriceChanged() {
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
+
+        assertThatThrownBy(() -> orderService.createOrder(request(BigDecimal.valueOf(800_000))))
+                .isInstanceOfSatisfying(PriceChangedException.class,
+                        e -> assertThat(e.getProductIds()).containsExactly(PRODUCT_ID));
+
+        verify(inventoryGateway, never()).checkInventory(any());
+        verify(orderRepository, never()).save(any());
+        verify(paymentGateway, never()).pay(anyString(), any());
+    }
+
+    @Test
     void createOrder_shouldNotSaveOrCharge_whenOutOfStock() {
         when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
         when(inventoryGateway.checkInventory(any()))
@@ -211,12 +225,19 @@ class OrderServiceTest {
         verify(paymentGateway, never()).pay(anyString(), any());
     }
 
+    /** Client sends the price it showed, typically without decimals. */
     private OrderRequest request() {
-        return new OrderRequest(1L, List.of(new OrderItemRequest(PRODUCT_ID, 2L)), "MOMO", "TOKEN_OK");
+        return request(BigDecimal.valueOf(500_000));
     }
 
+    private OrderRequest request(BigDecimal expectedPrice) {
+        return new OrderRequest(1L, List.of(new OrderItemRequest(PRODUCT_ID, 2L, expectedPrice)), "MOMO",
+                "TOKEN_OK");
+    }
+
+    /** Same price as {@link #request()}, but with scale 2: the form the view has after a database round-trip. */
     private ProductView mouse() {
-        return ProductView.from(new ProductChangedEvent(PRODUCT_ID, "Mouse", BigDecimal.valueOf(500_000), 1L, false,
+        return ProductView.from(new ProductChangedEvent(PRODUCT_ID, "Mouse", new BigDecimal("500000.00"), 1L, false,
                 Instant.now()));
     }
 

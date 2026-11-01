@@ -19,6 +19,7 @@ import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.entity.OrderItem;
 import com.ecommerce.orderservice.entity.ProductView;
 import com.ecommerce.orderservice.exception.OutOfStockException;
+import com.ecommerce.orderservice.exception.PriceChangedException;
 import com.ecommerce.orderservice.exception.ProductNotFoundException;
 import com.ecommerce.orderservice.repository.OrderRepository;
 import com.ecommerce.orderservice.repository.ProductViewRepository;
@@ -77,11 +78,18 @@ public class OrderService {
                                 .collect(Collectors.toMap(ProductView::getProductId, p -> p));
 
                 List<OrderItem> items = new ArrayList<>();
+                List<Long> priceChanged = new ArrayList<>();
                 for (OrderItemRequest req : request.items()) {
                         ProductView product = products.get(req.productId());
 
                         if (product == null || product.isDeleted())
                                 throw new ProductNotFoundException(req.productId());
+
+                        // compareTo, not equals: the view's price is read back with the column's scale
+                        // (800000.00), and equals would reject an identical price sent as 800000
+                        if (req.expectedPrice().compareTo(product.getPrice()) != 0) {
+                                priceChanged.add(req.productId());
+                        }
 
                         items.add(OrderItem.builder()
                                         .productId(product.getProductId())
@@ -89,6 +97,12 @@ public class OrderService {
                                         .unitPrice(product.getPrice()) // snapshot value
                                         .quantity(req.quantity())
                                         .build());
+                }
+
+                // Report every changed line at once so the client reloads them in one go; checked
+                // before any remote call because it is local and cheap
+                if (!priceChanged.isEmpty()) {
+                        throw new PriceChangedException(priceChanged);
                 }
 
                 // call inventory, check quantity product

@@ -54,6 +54,23 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Rejects an order whose expected prices no longer match. Returns ids only, no prices: the client
+     * reloads them from product-service, and comparing the reloaded price with the one it sent tells
+     * it whether the customer must confirm a new price or the order can simply be retried shortly.
+     */
+    @ExceptionHandler(PriceChangedException.class)
+    public ResponseEntity<Map<String, Object>> handlerPriceChanged(PriceChangedException ex) {
+        Map<String, Object> body = Map.of(
+                "timestamp", Instant.now().toString(),
+                "status", 409,
+                "error", "Price Changed",
+                "message", ex.getMessage(),
+                "productIds", ex.getProductIds());
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
+
+    /**
      * Handles errors returned by downstream services through Feign.
      *
      * <p>4xx keeps the downstream status and its business message (e.g. "out of stock"), because the

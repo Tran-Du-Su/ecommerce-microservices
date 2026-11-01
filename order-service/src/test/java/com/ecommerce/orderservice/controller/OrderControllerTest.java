@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.dto.OrderResponse;
+import com.ecommerce.orderservice.exception.PriceChangedException;
 import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.service.OrderService;
 
@@ -38,7 +39,7 @@ class OrderControllerTest {
     private static final String VALID_BODY = """
             {
               "userId": 1,
-              "items": [ { "productId": 100, "quantity": 2 } ],
+              "items": [ { "productId": 100, "quantity": 2, "expectedPrice": 500000 } ],
               "paymentMethod": "MOMO",
               "paymentToken": "TOKEN_OK"
             }
@@ -85,6 +86,28 @@ class OrderControllerTest {
                 .andExpect(jsonPath("$.errors.paymentToken").value("Payment token is required"));
 
         verify(orderService, never()).createOrder(any());
+    }
+
+    @Test
+    void createOrder_shouldReturn400_withoutCallingService_whenExpectedPriceMissing() throws Exception {
+        mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON)
+                .content(VALID_BODY.replace(", \"expectedPrice\": 500000", "")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors['items[0].expectedPrice']").value("Expected price is required"));
+
+        verify(orderService, never()).createOrder(any());
+    }
+
+    @Test
+    void createOrder_shouldReturn409_withIdsButNoPrice_whenPriceChanged() throws Exception {
+        when(orderService.createOrder(any())).thenThrow(new PriceChangedException(List.of(100L)));
+
+        mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("Price Changed"))
+                .andExpect(jsonPath("$.productIds[0]").value(100))
+                // Our copy may be the stale one, so it must never be presented as the new price
+                .andExpect(jsonPath("$.currentPrice").doesNotExist());
     }
 
     @Test
