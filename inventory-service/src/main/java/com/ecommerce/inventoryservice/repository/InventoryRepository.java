@@ -41,4 +41,17 @@ public interface InventoryRepository extends JpaRepository<Inventory, Long> {
          AND i.quantity >= :quantity
       """)
   int decreaseQuantity(@Param("productId") Long productId, @Param("quantity") Long quantity);
+
+  /**
+   * ATOMIC stock return, the counterpart of {@link #decreaseQuantity}: one UPDATE statement, so
+   * it cannot lose a concurrent change. 0 rows returned = no inventory record for the product.
+   */
+  @Transactional
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query("""
+      UPDATE Inventory i
+         SET i.quantity = i.quantity + :quantity
+       WHERE i.productId = :productId
+      """)
+  int increaseQuantity(@Param("productId") Long productId, @Param("quantity") Long quantity);
 }

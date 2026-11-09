@@ -42,4 +42,18 @@ public class InventoryController {
         inventoryService.decreaseInventory(request.items());
     }
 
+    /** Saga step: takes the order's stock. Safe to repeat for the same order. */
+    @PostMapping("/reservations/{orderId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void reserve(@PathVariable Long orderId, @RequestBody @Valid StockCheckRequest request) {
+        inventoryService.reserve(orderId, request.items());
+    }
+
+    /** Saga compensation: no body, inventory returns what it recorded. Safe to repeat. */
+    @PostMapping("/reservations/{orderId}/release")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void release(@PathVariable Long orderId) {
+        inventoryService.release(orderId);
+    }
+
 }
