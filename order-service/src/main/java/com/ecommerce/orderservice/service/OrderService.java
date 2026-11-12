@@ -52,7 +52,7 @@ public class OrderService {
 
         /**
          * Places an order: snapshot products, check stock, save the order as {@code PENDING},
-         * decrease stock, then charge the customer.
+         * reserve stock, then charge the customer.
          *
          * <p>The charge is the last step on purpose: it is the hardest step to undo (a refund goes
          * through a third party and is visible to the customer), so every failure that can happen
@@ -134,7 +134,9 @@ public class OrderService {
                 // idempotency key
                 Order saved = orderRepository.save(order);
 
-                await(inventoryGateway.decreaseInventory(new StockCheckRequest(stockCheckItems)));
+                // Keyed by the order id, so sending it again cannot take the stock twice.
+                // Known gap: a failure here leaves the order PENDING (handled in the next step)
+                await(inventoryGateway.reserveStock(saved.getId(), new StockCheckRequest(stockCheckItems)));
 
                 return toResponse(chargeAndApplyOutcome(saved, request));
         }
@@ -142,9 +144,11 @@ public class OrderService {
         /**
          * Charges the order and moves it to the status matching the payment outcome.
          *
-         * <p>Known gap (deferred to Part 8): when the payment is declined the order is cancelled but
-         * the stock decreased earlier is NOT released, because inventory-service has no release API
-         * yet.
+         * <p>A definite "no money taken" (declined or rejected) returns the stock, then cancels. An
+         * unknown outcome must NOT compensate: the customer may have paid.
+         *
+         * <p>Known gap (Part 8): if the release itself fails, the order stays {@code PENDING} and
+         * nothing tries again yet.
          *
          * @param order   saved order in {@code PENDING}
          * @param request original request carrying the payment method and token
@@ -171,6 +175,7 @@ public class OrderService {
                 } catch (FeignException.FeignClientException e) {
                         // payment-service rejected the request (e.g. unsupported payment method), so no
                         // money was taken: the order can safely be closed before reporting the error
+                        releaseStock(order);
                         order.cancel();
                         orderRepository.save(order);
                         throw e;
@@ -178,7 +183,10 @@ public class OrderService {
 
                 switch (payment.status()) {
                         case SUCCESS -> order.confirm();
-                        case FAILED -> order.cancel();
+                        case FAILED -> {
+                                releaseStock(order);
+                                order.cancel();
+                        }
                         case PENDING -> {
                                 // The provider has not decided yet; the order waits like the payment does
                         }
@@ -188,6 +196,17 @@ public class OrderService {
                                         "Unexpected REFUNDED payment for new order " + order.getId());
                 }
                 return orderRepository.save(order);
+        }
+
+        /**
+         * Saga compensation of the stock reservation. Runs before the order is cancelled, so a failed
+         * release leaves the order {@code PENDING} rather than cancelled with its stock still held.
+         *
+         * <p>Sends only the order id: inventory returns what it recorded for that order, never a
+         * quantity computed here.
+         */
+        private void releaseStock(Order order) {
+                await(inventoryGateway.releaseStock(order.getId()));
         }
 
         // get all order By User Id

@@ -101,4 +101,45 @@ public class InventoryServiceGateway {
         return failed;
     }
 
+    /**
+     * Saga step: reserves the order's stock, all or nothing.
+     *
+     * <p>Keyed by {@code orderId}, so inventory applies it at most once per order. That is what
+     * will make a retry after a timeout safe; the retry itself is not added yet.
+     *
+     * @param orderId the saved order, used by inventory as the idempotency key
+     * @param request products and quantities to reserve
+     * @return CompletableFuture with no result (void)
+     */
+    @CircuitBreaker(name = "inventory-service", fallbackMethod = "reserveStockFallback")
+    @TimeLimiter(name = "inventory-service")
+    public CompletableFuture<Void> reserveStock(Long orderId, StockCheckRequest request) {
+        return CompletableFuture.runAsync(() -> inventoryClient.reserve(orderId, request), executor);
+    }
+
+    // Known gap: turns every error, including a definite 409 "out of stock", into 503
+    private CompletableFuture<Void> reserveStockFallback(Long orderId, StockCheckRequest request,
+            Throwable exception) {
+        return CompletableFuture.failedFuture(new ServiceUnavailableException("inventory-service", exception));
+    }
+
+    /**
+     * Saga compensation: returns what {@link #reserveStock} took for the order.
+     *
+     * <p>Only the order id is sent: inventory returns what it recorded, so the caller cannot
+     * return a wrong quantity. Safe to repeat, and a no-op for an order that reserved nothing.
+     *
+     * @param orderId the order whose reservation is released
+     * @return CompletableFuture with no result (void)
+     */
+    @CircuitBreaker(name = "inventory-service", fallbackMethod = "releaseStockFallback")
+    @TimeLimiter(name = "inventory-service")
+    public CompletableFuture<Void> releaseStock(Long orderId) {
+        return CompletableFuture.runAsync(() -> inventoryClient.release(orderId), executor);
+    }
+
+    private CompletableFuture<Void> releaseStockFallback(Long orderId, Throwable exception) {
+        return CompletableFuture.failedFuture(new ServiceUnavailableException("inventory-service", exception));
+    }
+
 }
