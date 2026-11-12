@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 import com.ecommerce.orderservice.dto.StockCheckRequest;
 import com.ecommerce.orderservice.dto.StockShortage;
 import com.ecommerce.orderservice.exception.ServiceUnavailableException;
+
+import feign.FeignException;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
 import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
@@ -104,20 +106,48 @@ public class InventoryServiceGateway {
     /**
      * Saga step: reserves the order's stock, all or nothing.
      *
-     * <p>Keyed by {@code orderId}, so inventory applies it at most once per order. That is what
-     * will make a retry after a timeout safe; the retry itself is not added yet.
+     * <p>Retried on timeout and 5xx, unlike {@link #decreaseInventory}: inventory keys the
+     * reservation by {@code orderId}, so a retry of an attempt that was in fact applied finds the
+     * reservation and takes nothing more. Retrying a state-changing call is only safe when the
+     * receiver is idempotent.
      *
-     * @param orderId the saved order, used by inventory as the idempotency key
+     * <p>Failure contract for callers:
+     * <ul>
+     * <li>{@link FeignException.FeignClientException} (4xx, e.g. 409 out of stock): a definite
+     * failure, nothing was reserved. Not retried, rethrown unchanged.</li>
+     * <li>{@link ServiceUnavailableException}: no answer after all attempts. The stock may or may
+     * not be reserved.</li>
+     * </ul>
+     *
+     * <p>The fallbacks sit on {@code @Retry}, the outermost aspect
+     * ({@code Retry(CircuitBreaker(TimeLimiter(call)))}). Retry decides by exception type, so the
+     * exception must reach it unchanged: a fallback on the inner CircuitBreaker would rewrap
+     * {@code CallNotPermittedException} as {@link ServiceUnavailableException}, and Retry would
+     * keep retrying an open circuit.
+     *
+     * @param orderId the saved order, used by inventory as the idempotency key; every attempt
+     *                reuses it because Resilience4j re-invokes the method with the same arguments
      * @param request products and quantities to reserve
      * @return CompletableFuture with no result (void)
      */
-    @CircuitBreaker(name = "inventory-service", fallbackMethod = "reserveStockFallback")
+    @Retry(name = "inventory-service", fallbackMethod = "reserveStockFallback")
+    @CircuitBreaker(name = "inventory-service")
     @TimeLimiter(name = "inventory-service")
     public CompletableFuture<Void> reserveStock(Long orderId, StockCheckRequest request) {
         return CompletableFuture.runAsync(() -> inventoryClient.reserve(orderId, request), executor);
     }
 
-    // Known gap: turns every error, including a definite 409 "out of stock", into 503
+    /**
+     * Fallback for deterministic rejections (4xx). Resilience4j picks the fallback whose exception
+     * parameter is the most specific match, so 4xx land here instead of in the generic fallback.
+     * The original exception is kept so its HTTP status and message reach the caller.
+     */
+    private CompletableFuture<Void> reserveStockFallback(Long orderId, StockCheckRequest request,
+            FeignException.FeignClientException exception) {
+        return CompletableFuture.failedFuture(exception);
+    }
+
+    /** Fallback for "no answer" failures after retries are exhausted or the circuit is open. */
     private CompletableFuture<Void> reserveStockFallback(Long orderId, StockCheckRequest request,
             Throwable exception) {
         return CompletableFuture.failedFuture(new ServiceUnavailableException("inventory-service", exception));
@@ -127,17 +157,25 @@ public class InventoryServiceGateway {
      * Saga compensation: returns what {@link #reserveStock} took for the order.
      *
      * <p>Only the order id is sent: inventory returns what it recorded, so the caller cannot
-     * return a wrong quantity. Safe to repeat, and a no-op for an order that reserved nothing.
+     * return a wrong quantity. Retried like {@link #reserveStock}: safe to repeat, and a no-op for
+     * an order that reserved nothing. Same failure contract.
      *
      * @param orderId the order whose reservation is released
      * @return CompletableFuture with no result (void)
      */
-    @CircuitBreaker(name = "inventory-service", fallbackMethod = "releaseStockFallback")
+    @Retry(name = "inventory-service", fallbackMethod = "releaseStockFallback")
+    @CircuitBreaker(name = "inventory-service")
     @TimeLimiter(name = "inventory-service")
     public CompletableFuture<Void> releaseStock(Long orderId) {
         return CompletableFuture.runAsync(() -> inventoryClient.release(orderId), executor);
     }
 
+    /** 4xx: rethrown unchanged, like {@link #reserveStockFallback(Long, StockCheckRequest, FeignException.FeignClientException)}. */
+    private CompletableFuture<Void> releaseStockFallback(Long orderId, FeignException.FeignClientException exception) {
+        return CompletableFuture.failedFuture(exception);
+    }
+
+    /** No answer after all attempts: the stock may or may not have been returned. */
     private CompletableFuture<Void> releaseStockFallback(Long orderId, Throwable exception) {
         return CompletableFuture.failedFuture(new ServiceUnavailableException("inventory-service", exception));
     }
