@@ -134,9 +134,19 @@ public class OrderService {
                 // idempotency key
                 Order saved = orderRepository.save(order);
 
-                // Keyed by the order id, so sending it again cannot take the stock twice.
-                // Known gap: a failure here leaves the order PENDING (handled in the next step)
-                await(inventoryGateway.reserveStock(saved.getId(), new StockCheckRequest(stockCheckItems)));
+                try {
+                        // Keyed by the order id, so sending it again cannot take the stock twice.
+                        await(inventoryGateway.reserveStock(saved.getId(), new StockCheckRequest(stockCheckItems)));
+                } catch (FeignException.FeignClientException e) {
+                        // 4xx is the definitive response.
+                        // The inventory holds all products in one transaction; if any product is
+                        // missing, everything is rolled back, meaning nothing remains held, so there
+                        // is no need to call `releaseStock`.
+                        // Cancel the order to prevent it from getting stuck in a `PENDING` state.
+                        saved.cancel();
+                        orderRepository.save(saved);
+                        throw e;
+                }
 
                 return toResponse(chargeAndApplyOutcome(saved, request));
         }

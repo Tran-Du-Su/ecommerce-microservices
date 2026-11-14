@@ -252,6 +252,36 @@ class OrderServiceTest {
         verify(inventoryGateway).reserveStock(eq(ORDER_ID), any());
         // The customer must never be charged for stock that could not be reserved
         verify(paymentGateway, never()).pay(anyString(), any());
+        // Unknown outcome (the stock may be held): only the initial insert, the order stays PENDING
+        verify(orderRepository, times(1)).save(any());
+    }
+
+    /**
+     * Stock sold out between /check and reserve. A 4xx is a definite "nothing reserved" (inventory
+     * rolls the whole reservation back), so the order is closed and there is nothing to compensate.
+     */
+    @Test
+    void createOrder_shouldCancelWithoutReleaseThenRethrow_whenStockReservationRejected() {
+        when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
+        when(inventoryGateway.checkInventory(any())).thenReturn(CompletableFuture.completedFuture(List.of()));
+        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> {
+            Order order = invocation.getArgument(0);
+            order.setId(ORDER_ID);
+            return order;
+        });
+        FeignException rejection = feignError(409);
+        when(inventoryGateway.reserveStock(anyLong(), any())).thenReturn(CompletableFuture.failedFuture(rejection));
+
+        // Same 409 the client gets when /check finds the shortage: one meaning, one status
+        assertThatThrownBy(() -> orderService.createOrder(request())).isSameAs(rejection);
+
+        // 1: insert PENDING, 2: persist CANCELLED, so the order is never left stuck in PENDING
+        ArgumentCaptor<Order> saved = ArgumentCaptor.forClass(Order.class);
+        verify(orderRepository, times(2)).save(saved.capture());
+        assertThat(saved.getValue().getStatus()).isEqualTo(OrderStatus.CANCELLED);
+        // Nothing was reserved, so there is nothing to release
+        verify(inventoryGateway, never()).releaseStock(anyLong());
+        verify(paymentGateway, never()).pay(anyString(), any());
     }
 
     /** Client sends the price it showed, typically without decimals. */
