@@ -31,6 +31,8 @@ import feign.FeignException;
 import feign.Request;
 import feign.Response;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.retry.Retry;
+import io.github.resilience4j.retry.RetryRegistry;
 
 /**
  * Verifies the resilience behaviour of {@link PaymentServiceGateway} with the real Resilience4j
@@ -58,6 +60,9 @@ class PaymentServiceGatewayTest {
 
     @Autowired
     private CircuitBreakerRegistry circuitBreakerRegistry;
+
+    @Autowired
+    private RetryRegistry retryRegistry;
 
     @MockitoBean
     private PaymentClient paymentClient;
@@ -118,15 +123,25 @@ class PaymentServiceGatewayTest {
         assertThat(keys.getAllValues()).containsOnly(KEY);
     }
 
+    /**
+     * Guards the fallback position: Retry ignores CallNotPermittedException only if it receives it
+     * unchanged. A fallback on the inner CircuitBreaker (which rewraps it as
+     * ServiceUnavailableException) would make Retry hammer an open circuit.
+     */
     @Test
-    void pay_shouldFailFastWithoutCallingPaymentService_whenCircuitOpen() {
+    void pay_shouldFailFastWithoutRetry_whenCircuitOpen() {
         circuitBreakerRegistry.circuitBreaker("payment-service").transitionToOpenState();
+        Retry.Metrics retryMetrics = retryRegistry.retry("payment-service").getMetrics();
+        long withRetryBefore = retryMetrics.getNumberOfFailedCallsWithRetryAttempt();
+        long withoutRetryBefore = retryMetrics.getNumberOfFailedCallsWithoutRetryAttempt();
 
         assertThatThrownBy(() -> gateway.pay(KEY, request()).join())
                 .isInstanceOf(CompletionException.class)
                 .hasCauseInstanceOf(ServiceUnavailableException.class);
 
         verify(paymentClient, never()).pay(anyString(), any());
+        assertThat(retryMetrics.getNumberOfFailedCallsWithRetryAttempt()).isEqualTo(withRetryBefore);
+        assertThat(retryMetrics.getNumberOfFailedCallsWithoutRetryAttempt()).isEqualTo(withoutRetryBefore + 1);
     }
 
     private PaymentRequest request() {

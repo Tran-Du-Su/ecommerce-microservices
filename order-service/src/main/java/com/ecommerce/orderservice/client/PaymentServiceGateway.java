@@ -47,9 +47,11 @@ public class PaymentServiceGateway {
     /**
      * Charges an order through payment-service.
      *
-     * <p>The fallback sits on {@code @Retry} because Retry is the outermost aspect
-     * ({@code Retry(CircuitBreaker(TimeLimiter(call)))}); a fallback on an inner aspect would hide
-     * failures from Retry and CircuitBreaker.
+     * <p>The fallbacks sit on {@code @Retry}, the outermost aspect
+     * ({@code Retry(CircuitBreaker(TimeLimiter(call)))}). Retry decides by exception type, so the
+     * exception must reach it unchanged: a fallback on the inner CircuitBreaker would rewrap
+     * {@code CallNotPermittedException} as {@link ServiceUnavailableException}, and Retry would
+     * keep retrying an open circuit.
      *
      * @param idempotencyKey key of this payment attempt; every retry reuses the same value because
      *                       Resilience4j re-invokes the method with the same arguments
