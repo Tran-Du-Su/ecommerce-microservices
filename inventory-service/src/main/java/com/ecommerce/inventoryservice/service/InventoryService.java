@@ -88,38 +88,6 @@ public class InventoryService {
     }
 
     /**
-     * Subtract inventory for the entire order.
-     *
-     * Each item is subtracted using ONE conditional UPDATE statement
-     * (compare-and-swap at
-     * the DB layer), so there is no lost update like in the previous
-     * read-modify-write
-     * version.
-     *
-     * Sort by productId before looping: two orders that conflict with the same set
-     * of
-     * products will take row locks in the SAME order, avoiding deadlock like
-     * A-waiting-for-B /
-     * B-waiting-for-A.
-     *
-     * @Transactional to rollback previous items if the Nth item is out of stock —
-     *                inventory is not subtracted halfway.
-     */
-    @Transactional
-    public void decreaseInventory(List<StockCheckItem> stockCheckItems) {
-        stockCheckItems.stream()
-                .sorted(Comparator.comparing(StockCheckItem::productId))
-                .forEach(item -> {
-                    int updated = inventoryRepository.decreaseQuantity(item.productId(), item.quantity());
-
-                    // 0 rows affected = insufficient stock (or no inventory record)
-                    if (updated == 0) {
-                        throw new OutOfStockException(item.productId());
-                    }
-                });
-    }
-
-    /**
      * Saga step: takes the stock of an order and records what was taken, all or nothing.
      *
      * <p>Idempotent per order, because order-service may send it twice (a retry after a timeout

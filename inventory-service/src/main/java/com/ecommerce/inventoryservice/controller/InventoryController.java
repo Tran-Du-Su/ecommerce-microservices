@@ -36,12 +36,6 @@ public class InventoryController {
         return inventoryService.checkInventory(request.items());
     }
 
-    @PostMapping("/decrease")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void decreaseInventory(@RequestBody @Valid StockCheckRequest request) {
-        inventoryService.decreaseInventory(request.items());
-    }
-
     /** Saga step: takes the order's stock. Safe to repeat for the same order. */
     @PostMapping("/reservations/{orderId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
