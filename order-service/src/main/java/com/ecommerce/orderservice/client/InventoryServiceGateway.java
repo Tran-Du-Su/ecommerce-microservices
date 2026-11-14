@@ -69,47 +69,11 @@ public class InventoryServiceGateway {
     }
 
     /**
-     * Decrease inventory for a list of products using Feign client
-     * CircuitBreaker: name of the circuit breaker - "inventory-service"
-     * fallbackMethod: method to call when the circuit breaker is open -
-     * "decreaseInventoryFallback"
-     * TimeLimiter: name of the time limiter - "inventory-service"
-     * 
-     * @param request StockCheckRequest containing product IDs and quantities
-     * @return CompletableFuture with no result (void)
-     */
-    @CircuitBreaker(name = "inventory-service", fallbackMethod = "decreaseInventoryFallback")
-    @TimeLimiter(name = "inventory-service")
-    public CompletableFuture<Void> decreaseInventory(StockCheckRequest request) {
-        // Async execution to decouple from the request-processing thread
-        return CompletableFuture.supplyAsync(() -> {
-            inventoryClient.decreaseInventory(request);
-            return null;
-        }, executor);
-    }
-
-    /**
-     * Fallback method for decreaseInventory
-     * 
-     * @param request   StockCheckRequest containing product IDs and quantities
-     * @param exception Throwable exception
-     * @return CompletableFuture with exception
-     */
-    private CompletableFuture<Void> decreaseInventoryFallback(StockCheckRequest request, Throwable exception) {
-        // Create a failed CompletableFuture with the exception
-        CompletableFuture<Void> failed = new CompletableFuture<>();
-        // Complete the future with the exception
-        failed.completeExceptionally(new ServiceUnavailableException("inventory-service", exception));
-        return failed;
-    }
-
-    /**
      * Saga step: reserves the order's stock, all or nothing.
      *
-     * <p>Retried on timeout and 5xx, unlike {@link #decreaseInventory}: inventory keys the
-     * reservation by {@code orderId}, so a retry of an attempt that was in fact applied finds the
-     * reservation and takes nothing more. Retrying a state-changing call is only safe when the
-     * receiver is idempotent.
+     * <p>Retried on timeout and 5xx: inventory keys the reservation by {@code orderId}, so a retry
+     * of an attempt that was in fact applied finds the reservation and takes nothing more.
+     * Retrying a state-changing call is only safe when the receiver is idempotent.
      *
      * <p>Failure contract for callers:
      * <ul>

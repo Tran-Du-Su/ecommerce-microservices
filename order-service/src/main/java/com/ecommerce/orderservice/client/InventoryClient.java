@@ -15,9 +15,6 @@ public interface InventoryClient {
         @PostMapping("/check")
         List<StockShortage> checkInventory(StockCheckRequest request);
 
-        @PostMapping("/decrease")
-        void decreaseInventory(StockCheckRequest request);
-
         /** Saga step. Keyed by the order: inventory applies it at most once per order. */
         @PostMapping("/reservations/{orderId}")
         void reserve(@PathVariable("orderId") Long orderId, StockCheckRequest request);

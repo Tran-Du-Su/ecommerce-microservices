@@ -18,9 +18,9 @@ import io.github.resilience4j.timelimiter.annotation.TimeLimiter;
 /**
  * Resilient entry point to payment-service.
  *
- * <p>Unlike {@code InventoryServiceGateway#decreaseInventory}, this call IS retried: payment-service
- * deduplicates requests by {@code Idempotency-Key}, so sending the same request twice cannot charge
- * twice. Retrying a state-changing call is only safe when the receiver is idempotent.
+ * <p>This call IS retried, timeouts included: payment-service deduplicates requests by
+ * {@code Idempotency-Key}, so sending the same request twice cannot charge twice. Retrying a
+ * state-changing call is only safe when the receiver is idempotent.
  *
  * <p>Failure contract for callers:
  * <ul>
