@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -78,6 +79,9 @@ class OrderServiceTest {
     @Nested
     class WhenStockIsReserved {
 
+        /** What each save committed, in call order; "pay" is added by tests that record the charge. */
+        private final List<String> timeline = new ArrayList<>();
+
         @BeforeEach
         void stubStepsBeforePayment() {
             when(productViewRepository.findAllById(List.of(PRODUCT_ID))).thenReturn(List.of(mouse()));
@@ -88,6 +92,8 @@ class OrderServiceTest {
                 if (order.getId() == null) {
                     order.setId(ORDER_ID); // simulate the id generated on the first insert
                 }
+                // Snapshot now: the same instance keeps changing after this call
+                timeline.add("save " + order.getStatus() + "/" + order.getSagaStep());
                 return order;
             });
         }
@@ -114,8 +120,8 @@ class OrderServiceTest {
             assertThat(payment.getValue().paymentMethod()).isEqualTo("MOMO");
             assertThat(payment.getValue().paymentToken()).isEqualTo("TOKEN_OK");
 
-            // 1: insert PENDING, 2: persist the outcome
-            verify(orderRepository, times(2)).save(any());
+            // 1: insert PENDING, 2: record PAYMENT_REQUESTED, 3: persist the outcome
+            verify(orderRepository, times(3)).save(any());
             verify(inventoryGateway, never()).releaseStock(anyLong());
         }
 
@@ -127,7 +133,7 @@ class OrderServiceTest {
             OrderResponse response = orderService.createOrder(request());
 
             assertThat(response.status()).isEqualTo(OrderStatus.CANCELLED);
-            verify(orderRepository, times(2)).save(any());
+            verify(orderRepository, times(3)).save(any());
 
             // Released by order id: inventory returns what it reserved for this order
             verify(inventoryGateway).releaseStock(ORDER_ID);
@@ -152,8 +158,8 @@ class OrderServiceTest {
             assertThatThrownBy(() -> orderService.createOrder(request()))
                     .isInstanceOf(ServiceUnavailableException.class);
 
-            // Only the initial insert: never cancelled while the stock is still held
-            verify(orderRepository, times(1)).save(any());
+            // Insert + PAYMENT_REQUESTED only: never cancelled while the stock is still held
+            verify(orderRepository, times(2)).save(any());
         }
 
         @Test
@@ -164,8 +170,9 @@ class OrderServiceTest {
             OrderResponse response = orderService.createOrder(request());
 
             assertThat(response.status()).isEqualTo(OrderStatus.PENDING);
-            // Only the initial insert: the order must not be cancelled while the charge is unknown
-            verify(orderRepository, times(1)).save(any());
+            // Insert + PAYMENT_REQUESTED only: the order must not be cancelled while the charge is unknown
+            verify(orderRepository, times(2)).save(any());
+            assertThat(timeline).last().isEqualTo("save PENDING/PAYMENT_REQUESTED");
             // The customer may have paid, so the stock must stay taken
             verify(inventoryGateway, never()).releaseStock(anyLong());
         }
@@ -179,9 +186,30 @@ class OrderServiceTest {
             assertThatThrownBy(() -> orderService.createOrder(request())).isSameAs(rejection);
 
             ArgumentCaptor<Order> saved = ArgumentCaptor.forClass(Order.class);
-            verify(orderRepository, times(2)).save(saved.capture());
+            verify(orderRepository, times(3)).save(saved.capture());
             assertThat(saved.getValue().getStatus()).isEqualTo(OrderStatus.CANCELLED);
             verify(inventoryGateway).releaseStock(ORDER_ID);
+        }
+
+        /**
+         * The step must be committed BEFORE the charge goes out. Recorded the other way round, a
+         * crash right after "pay" would leave RESERVING_STOCK in the database, and recovery would
+         * release the stock and cancel an order the customer has paid for.
+         */
+        @Test
+        void createOrder_shouldCommitPaymentRequestedBeforeCharging() {
+            when(paymentGateway.pay(anyString(), any())).thenAnswer(invocation -> {
+                timeline.add("pay");
+                return paid(PaymentStatus.SUCCESS);
+            });
+
+            orderService.createOrder(request());
+
+            assertThat(timeline).containsExactly(
+                    "save PENDING/RESERVING_STOCK",
+                    "save PENDING/PAYMENT_REQUESTED",
+                    "pay",
+                    "save CONFIRMED/PAYMENT_REQUESTED");
         }
     }
 

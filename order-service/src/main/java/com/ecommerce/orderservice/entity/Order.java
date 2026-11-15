@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.List;
 
 import com.ecommerce.orderservice.domain.OrderStatus;
+import com.ecommerce.orderservice.domain.SagaStep;
 
 @Entity
 @Table(name = "orders")
@@ -49,10 +50,36 @@ public class Order {
     @Column(nullable = false, length = 20)
     private OrderStatus status;
 
+    /**
+     * Saga progress, written before each remote step (see {@link SagaStep}). Changed only through
+     * {@link #markPaymentRequested()}; the builder sets the first step. {@code null} on orders
+     * created before this column existed: recovery must treat them as the riskiest case.
+     */
+    @Setter(AccessLevel.NONE)
+    @Enumerated(EnumType.STRING)
+    @Column(length = 30)
+    private SagaStep sagaStep;
+
     private Instant createdAt;
 
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items;
+
+    /**
+     * Records that the payment request is about to be sent. Must be saved before the call goes out.
+     *
+     * @throws IllegalStateException if the order is not {@code PENDING} or not at
+     *                               {@link SagaStep#RESERVING_STOCK}
+     */
+    public void markPaymentRequested() {
+        requirePending("request payment for");
+        // The saga only moves forward: going back to an earlier step would let recovery release
+        // stock for an order whose payment may already have gone out
+        if (this.sagaStep != SagaStep.RESERVING_STOCK) {
+            throw new IllegalStateException("Cannot request payment for order " + id + " at step " + sagaStep);
+        }
+        this.sagaStep = SagaStep.PAYMENT_REQUESTED;
+    }
 
     /**
      * Marks the order as paid.

@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import org.junit.jupiter.api.Test;
 
 import com.ecommerce.orderservice.domain.OrderStatus;
+import com.ecommerce.orderservice.domain.SagaStep;
 
 class OrderTest {
 
@@ -43,7 +44,33 @@ class OrderTest {
         assertThatThrownBy(order::cancel).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void markPaymentRequested_shouldMoveReservingStockToPaymentRequested() {
+        Order order = pendingOrder();
+
+        order.markPaymentRequested();
+
+        assertThat(order.getSagaStep()).isEqualTo(SagaStep.PAYMENT_REQUESTED);
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    }
+
+    @Test
+    void markPaymentRequested_shouldFail_whenAlreadyRequested() {
+        Order order = pendingOrder();
+        order.markPaymentRequested();
+
+        assertThatThrownBy(order::markPaymentRequested).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markPaymentRequested_shouldFail_whenOrderAlreadyCancelled() {
+        Order order = pendingOrder();
+        order.cancel();
+
+        assertThatThrownBy(order::markPaymentRequested).isInstanceOf(IllegalStateException.class);
+    }
+
     private Order pendingOrder() {
-        return Order.builder().id(1L).status(OrderStatus.PENDING).build();
+        return Order.builder().id(1L).status(OrderStatus.PENDING).sagaStep(SagaStep.RESERVING_STOCK).build();
     }
 }

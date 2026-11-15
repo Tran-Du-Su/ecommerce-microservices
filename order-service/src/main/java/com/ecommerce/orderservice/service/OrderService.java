@@ -8,6 +8,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import com.ecommerce.orderservice.domain.OrderStatus;
+import com.ecommerce.orderservice.domain.SagaStep;
 import com.ecommerce.orderservice.dto.OrderRequest;
 import com.ecommerce.orderservice.dto.OrderResponse;
 import com.ecommerce.orderservice.dto.OrderItemRequest;
@@ -52,7 +53,11 @@ public class OrderService {
 
         /**
          * Places an order: snapshot products, check stock, save the order as {@code PENDING},
-         * reserve stock, then charge the customer.
+         * reserve stock, record that payment is requested, then charge the customer.
+         *
+         * <p>Every {@code orderRepository.save} commits on its own (this method has no transaction),
+         * so the {@link SagaStep} written before each remote call survives a crash and tells
+         * recovery what may already have happened.
          *
          * <p>The charge is the last step on purpose: it is the hardest step to undo (a refund goes
          * through a third party and is visible to the customer), so every failure that can happen
@@ -123,6 +128,7 @@ public class OrderService {
                 Order order = Order.builder()
                                 .userId(request.userId())
                                 .status(OrderStatus.PENDING)
+                                .sagaStep(SagaStep.RESERVING_STOCK)
                                 .totalAmount(total)
                                 .createdAt(Instant.now())
                                 .build();
@@ -147,6 +153,13 @@ public class OrderService {
                         orderRepository.save(saved);
                         throw e;
                 }
+
+                // Committed BEFORE the charge: if the service dies during or right after it, recovery
+                // finds PAYMENT_REQUESTED and asks payment-service instead of cancelling an order the
+                // customer may have paid for. Dying before the request goes out only costs recovery
+                // one extra question.
+                saved.markPaymentRequested();
+                saved = orderRepository.save(saved);
 
                 return toResponse(chargeAndApplyOutcome(saved, request));
         }
