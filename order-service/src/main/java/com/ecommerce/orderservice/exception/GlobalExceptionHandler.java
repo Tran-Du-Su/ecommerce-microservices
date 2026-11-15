@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -124,6 +125,25 @@ public class GlobalExceptionHandler {
                 "message", "Unable to process request at this time. Please try again later.");
 
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(body);
+    }
+
+    /**
+     * The order was saved by someone else while this request was placing it, typically the recovery
+     * job claiming an order it considered stuck. The request stopped before charging, so the client
+     * must check the order instead of retrying blindly: placing it again creates a second order.
+     *
+     * <p>The exception message names the entity class and id, so only a fixed text is returned.
+     */
+    @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
+    public ResponseEntity<Map<String, Object>> handlerConcurrentUpdate(ObjectOptimisticLockingFailureException ex) {
+        log.warn("Concurrent update, request lost the version check: {}", ex.getMessage());
+        Map<String, Object> body = Map.of(
+                "timestamp", Instant.now().toString(),
+                "status", 409,
+                "error", "Conflict",
+                "message", "The order was changed while it was being placed. Check its status before placing it again.");
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
 
     /**

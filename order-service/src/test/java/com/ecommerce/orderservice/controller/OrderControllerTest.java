@@ -20,11 +20,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.dto.OrderResponse;
+import com.ecommerce.orderservice.entity.Order;
 import com.ecommerce.orderservice.exception.PriceChangedException;
 import com.ecommerce.orderservice.exception.ServiceUnavailableException;
 import com.ecommerce.orderservice.service.OrderService;
@@ -137,6 +139,18 @@ class OrderControllerTest {
         mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.message", not(containsString("inventory-service"))));
+    }
+
+    /** The request lost the race with the recovery job: same error format, no entity class or id. */
+    @Test
+    void createOrder_shouldReturn409_withoutInternals_whenOrderChangedConcurrently() throws Exception {
+        when(orderService.createOrder(any())).thenThrow(new ObjectOptimisticLockingFailureException(Order.class, 80L));
+
+        mockMvc.perform(post("/api/orders").contentType(MediaType.APPLICATION_JSON).content(VALID_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.status").value(409))
+                .andExpect(jsonPath("$.error").value("Conflict"))
+                .andExpect(jsonPath("$.message", not(containsString("com.ecommerce"))));
     }
 
     /** Builds the exception Feign raises for a downstream response with the given status and body. */
