@@ -8,6 +8,7 @@ import com.ecommerce.orderservice.domain.SagaStep;
 import com.ecommerce.orderservice.entity.Order;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 
 @Repository
@@ -17,9 +18,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findByUserId(Long userId);
 
     /**
-     * Orders stuck at a saga step since before {@code createdBefore}. A {@code NULL} step never
-     * matches ({@code saga_step = ?} is not true for NULL in SQL), so pre-saga orders are not picked up.
+     * Orders stuck at one of {@code sagaSteps} since before {@code createdBefore}. A {@code NULL} step
+     * never matches ({@code saga_step IN (...)} is not true for NULL in SQL), so pre-saga orders are
+     * not picked up.
      */
-    List<Order> findByStatusAndSagaStepAndCreatedAtBefore(OrderStatus status, SagaStep sagaStep,
+    List<Order> findByStatusAndSagaStepInAndCreatedAtBefore(OrderStatus status, Collection<SagaStep> sagaSteps,
             Instant createdBefore);
 }

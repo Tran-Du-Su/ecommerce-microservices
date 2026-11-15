@@ -31,15 +31,17 @@ class OrderRepositoryTest {
     @Test
     void findStuck_shouldReturnOnlyOldPendingOrders_atTheGivenStep() {
         Order stuck = save(OrderStatus.PENDING, SagaStep.RESERVING_STOCK, NOW.minus(Duration.ofMinutes(5)));
+        // claimed by an earlier run whose release failed
+        Order halfRecovered = save(OrderStatus.PENDING, SagaStep.COMPENSATING, NOW.minus(Duration.ofMinutes(5)));
         save(OrderStatus.PENDING, SagaStep.RESERVING_STOCK, NOW); // its request may still be running
         save(OrderStatus.PENDING, SagaStep.PAYMENT_REQUESTED, NOW.minus(Duration.ofMinutes(5))); // may be paid
         save(OrderStatus.PENDING, null, NOW.minus(Duration.ofMinutes(5))); // created before saga steps existed
         save(OrderStatus.CANCELLED, SagaStep.RESERVING_STOCK, NOW.minus(Duration.ofMinutes(5))); // already done
 
-        List<Order> found = orderRepository.findByStatusAndSagaStepAndCreatedAtBefore(
-                OrderStatus.PENDING, SagaStep.RESERVING_STOCK, CUTOFF);
+        List<Order> found = orderRepository.findByStatusAndSagaStepInAndCreatedAtBefore(
+                OrderStatus.PENDING, List.of(SagaStep.RESERVING_STOCK, SagaStep.COMPENSATING), CUTOFF);
 
-        assertThat(found).extracting(Order::getId).containsExactly(stuck.getId());
+        assertThat(found).extracting(Order::getId).containsExactlyInAnyOrder(stuck.getId(), halfRecovered.getId());
     }
 
     private Order save(OrderStatus status, SagaStep step, Instant createdAt) {
