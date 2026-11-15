@@ -13,5 +13,11 @@ public enum SagaStep {
     RESERVING_STOCK,
 
     /** The customer may have been charged: recovery must ask payment-service before deciding. */
-    PAYMENT_REQUESTED
+    PAYMENT_REQUESTED,
+
+    /**
+     * Recovery claimed the order to release its stock; no payment may be requested any more.
+     * Stays here if the release failed, so the next recovery run resumes it.
+     */
+    COMPENSATING
 }

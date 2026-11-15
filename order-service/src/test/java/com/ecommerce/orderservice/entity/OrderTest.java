@@ -70,6 +70,33 @@ class OrderTest {
         assertThatThrownBy(order::markPaymentRequested).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    void markCompensating_shouldMoveReservingStockToCompensating_andKeepOrderPending() {
+        Order order = pendingOrder();
+
+        order.markCompensating();
+
+        assertThat(order.getSagaStep()).isEqualTo(SagaStep.COMPENSATING);
+        // A claim, not a cancellation: CANCELLED comes only once the stock is back
+        assertThat(order.getStatus()).isEqualTo(OrderStatus.PENDING);
+    }
+
+    @Test
+    void markCompensating_shouldFail_whenPaymentAlreadyRequested() {
+        Order order = pendingOrder();
+        order.markPaymentRequested();
+
+        assertThatThrownBy(order::markCompensating).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void markPaymentRequested_shouldFail_whenRecoveryClaimedTheOrder() {
+        Order order = pendingOrder();
+        order.markCompensating();
+
+        assertThatThrownBy(order::markPaymentRequested).isInstanceOf(IllegalStateException.class);
+    }
+
     private Order pendingOrder() {
         return Order.builder().id(1L).status(OrderStatus.PENDING).sagaStep(SagaStep.RESERVING_STOCK).build();
     }

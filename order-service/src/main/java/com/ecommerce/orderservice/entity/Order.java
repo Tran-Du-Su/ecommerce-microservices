@@ -10,12 +10,15 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+
+import org.hibernate.annotations.ColumnDefault;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -62,6 +65,21 @@ public class Order {
 
     private Instant createdAt;
 
+    /**
+     * Optimistic lock: every save runs {@code UPDATE ... WHERE id = ? AND version = ?}. When the
+     * request and the recovery job both hold this order, the one that saves second matches no row
+     * and fails instead of silently overwriting the other's change.
+     *
+     * <p>{@code DEFAULT 0} because the version column is {@code NOT NULL}: without a default,
+     * {@code ddl-auto: update} cannot add it to a table that already has orders, only logs the
+     * failure, and every order query then fails on the missing column.
+     */
+    @Version
+    @Setter(AccessLevel.NONE)
+    @ColumnDefault("0")
+    @Column(nullable = false)
+    private Long version;
+
     @OneToMany(mappedBy = "order", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<OrderItem> items;
 
@@ -79,6 +97,22 @@ public class Order {
             throw new IllegalStateException("Cannot request payment for order " + id + " at step " + sagaStep);
         }
         this.sagaStep = SagaStep.PAYMENT_REQUESTED;
+    }
+
+    /**
+     * Claims the order for recovery, before its stock is released. Saved first, it makes the
+     * request's own save of {@code PAYMENT_REQUESTED} fail on the version check, so the customer is
+     * never charged for an order whose stock is being given back.
+     *
+     * @throws IllegalStateException if the order is not {@code PENDING} or not at
+     *                               {@link SagaStep#RESERVING_STOCK}
+     */
+    public void markCompensating() {
+        requirePending("compensate");
+        if (this.sagaStep != SagaStep.RESERVING_STOCK) {
+            throw new IllegalStateException("Cannot compensate order " + id + " at step " + sagaStep);
+        }
+        this.sagaStep = SagaStep.COMPENSATING;
     }
 
     /**
