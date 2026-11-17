@@ -55,12 +55,18 @@ public class Order {
 
     /**
      * Saga progress, written before each remote step (see {@link SagaStep}). Changed only through
-     * {@link #markPaymentRequested()}; the builder sets the first step. {@code null} on orders
-     * created before this column existed: recovery must treat them as the riskiest case.
+     * {@link #markPaymentRequested()} and {@link #markCompensating()}; the builder sets the first
+     * step. {@code null} on orders created before this column existed: recovery must treat them as
+     * the riskiest case.
+     *
+     * <p>A plain {@code varchar}, not the {@code ENUM} type Hibernate generates on H2: that type
+     * lists the values known when the column was created, {@code ddl-auto: update} never alters an
+     * existing column, and a step added later (as {@code COMPENSATING} was) is then rejected by
+     * the database, which broke every recovery run.
      */
     @Setter(AccessLevel.NONE)
     @Enumerated(EnumType.STRING)
-    @Column(length = 30)
+    @Column(columnDefinition = "varchar(30)")
     private SagaStep sagaStep;
 
     private Instant createdAt;

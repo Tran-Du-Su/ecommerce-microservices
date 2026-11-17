@@ -10,6 +10,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import com.ecommerce.orderservice.domain.OrderStatus;
 import com.ecommerce.orderservice.domain.SagaStep;
@@ -23,6 +24,9 @@ class OrderRepositoryTest {
 
     @Autowired
     private OrderRepository orderRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     /**
      * The recovery query must pick only orders that are safe to compensate. Anything else it
@@ -42,6 +46,20 @@ class OrderRepositoryTest {
                 OrderStatus.PENDING, List.of(SagaStep.RESERVING_STOCK, SagaStep.COMPENSATING), CUTOFF);
 
         assertThat(found).extracting(Order::getId).containsExactlyInAnyOrder(stuck.getId(), halfRecovered.getId());
+    }
+
+    /**
+     * Adding a {@link SagaStep} must not need a schema change. An {@code ENUM} column only accepts
+     * the values known when it was created, and {@code ddl-auto: update} never widens it.
+     */
+    @Test
+    void sagaStepColumn_shouldBePlainVarchar_soNewStepsNeedNoSchemaChange() {
+        String type = jdbcTemplate.queryForObject("""
+                SELECT data_type FROM information_schema.columns
+                 WHERE table_name = 'ORDERS' AND column_name = 'SAGA_STEP'
+                """, String.class);
+
+        assertThat(type).isEqualTo("CHARACTER VARYING");
     }
 
     private Order save(OrderStatus status, SagaStep step, Instant createdAt) {
