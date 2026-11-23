@@ -12,8 +12,6 @@ import com.ecommerce.inventoryservice.entity.StockReservation.Status;
 
 public interface StockReservationRepository extends JpaRepository<StockReservation, Long> {
 
-    boolean existsByOrderId(Long orderId);
-
     /** Sorted by product, the same lock order as the stock decrease, to avoid deadlocks. */
     List<StockReservation> findByOrderIdOrderByProductIdAsc(Long orderId);
 

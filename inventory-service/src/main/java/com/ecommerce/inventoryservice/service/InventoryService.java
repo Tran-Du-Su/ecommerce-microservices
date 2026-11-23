@@ -18,8 +18,10 @@ import com.ecommerce.inventoryservice.dto.InventoryResponse;
 import com.ecommerce.inventoryservice.dto.StockCheckItem;
 import com.ecommerce.inventoryservice.dto.StockShortage;
 import com.ecommerce.inventoryservice.entity.Inventory;
+import com.ecommerce.inventoryservice.entity.OrderReservation;
 import com.ecommerce.inventoryservice.entity.StockReservation;
 import com.ecommerce.inventoryservice.repository.InventoryRepository;
+import com.ecommerce.inventoryservice.repository.OrderReservationRepository;
 import com.ecommerce.inventoryservice.repository.StockReservationRepository;
 import lombok.RequiredArgsConstructor;
 
@@ -29,6 +31,7 @@ public class InventoryService {
 
     private final InventoryRepository inventoryRepository;
     private final StockReservationRepository reservationRepository;
+    private final OrderReservationRepository orderReservationRepository;
     private final TransactionTemplate transactionTemplate;
 
     // create inventory
@@ -91,9 +94,9 @@ public class InventoryService {
      * Saga step: takes the stock of an order and records what was taken, all or nothing.
      *
      * <p>Idempotent per order, because order-service may send it twice (a retry after a timeout
-     * whose first attempt was in fact applied). A sequential repeat finds the reservation and does
-     * nothing. A concurrent repeat collides on the unique key and rolls back, leaving the first
-     * one's reservation as the single outcome.
+     * whose first attempt was in fact applied). A sequential repeat finds the order's
+     * {@link OrderReservation} and does nothing. A concurrent repeat waits on its unique key, then
+     * collides and rolls back, leaving the first one's reservation as the single outcome.
      *
      * <p>Not {@code @Transactional}: the duplicate-key error can only be caught after its
      * transaction has rolled back, so the transaction is opened inside, by the template.
@@ -106,16 +109,19 @@ public class InventoryService {
         } catch (DataIntegrityViolationException e) {
             // Only "another call reserved this order first" is a repeat; anything else (e.g. the
             // same product twice in one request) is a real error
-            if (!reservationRepository.existsByOrderId(orderId)) {
+            if (!orderReservationRepository.existsByOrderId(orderId)) {
                 throw e;
             }
         }
     }
 
     private void reserveOnce(Long orderId, List<StockCheckItem> items) {
-        if (reservationRepository.existsByOrderId(orderId)) {
-            return;
+        if (orderReservationRepository.existsByOrderId(orderId)) {
+            return; // shortcut for a sequential repeat; concurrent ones are stopped by the insert below
         }
+        // Claim the order id BEFORE taking any stock: another Saga call for the same order now waits
+        // on this unique key until this transaction ends. Flushed so the check happens here.
+        orderReservationRepository.saveAndFlush(OrderReservation.reserved(orderId));
         items.stream()
                 .sorted(Comparator.comparing(StockCheckItem::productId)) // same lock order everywhere
                 .forEach(item -> {

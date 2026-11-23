@@ -23,6 +23,7 @@ import com.ecommerce.inventoryservice.dto.StockCheckItem;
 import com.ecommerce.inventoryservice.entity.Inventory;
 import com.ecommerce.inventoryservice.exception.OutOfStockException;
 import com.ecommerce.inventoryservice.repository.InventoryRepository;
+import com.ecommerce.inventoryservice.repository.OrderReservationRepository;
 import com.ecommerce.inventoryservice.repository.StockReservationRepository;
 
 /**
@@ -46,6 +47,8 @@ class StockReservationTest {
     private InventoryRepository inventoryRepository;
     @Autowired
     private StockReservationRepository reservationRepository;
+    @Autowired
+    private OrderReservationRepository orderReservationRepository;
 
     @BeforeEach
     void setUp() {
@@ -56,6 +59,7 @@ class StockReservationTest {
     @AfterEach
     void tearDown() {
         reservationRepository.deleteAll();
+        orderReservationRepository.deleteAll();
         inventoryRepository.deleteAll();
     }
 
@@ -93,7 +97,9 @@ class StockReservationTest {
                 .isInstanceOf(OutOfStockException.class);
 
         assertThat(stock(PRODUCT_ID)).isEqualTo(10L);
-        assertThat(reservationRepository.existsByOrderId(ORDER_ID)).isFalse();
+        // The order row rolls back with the stock: a later reserve of this order is not mistaken for a repeat
+        assertThat(reservationRepository.count()).isZero();
+        assertThat(orderReservationRepository.count()).isZero();
     }
 
     @Test
@@ -110,6 +116,17 @@ class StockReservationTest {
         runConcurrently(() -> inventoryService.reserve(ORDER_ID, List.of(new StockCheckItem(PRODUCT_ID, 3L))));
 
         assertThat(stock(PRODUCT_ID)).isEqualTo(7L);
+        assertThat(orderReservationRepository.count()).isEqualTo(1);
+    }
+
+    /** Several products, one order row: the per-order key, not the per-product one, marks the order. */
+    @Test
+    void reserve_shouldRecordOneOrderRow_forAllProducts() {
+        inventoryService.reserve(ORDER_ID, List.of(new StockCheckItem(PRODUCT_ID, 3L),
+                new StockCheckItem(OTHER_PRODUCT_ID, 1L)));
+
+        assertThat(reservationRepository.count()).isEqualTo(2);
+        assertThat(orderReservationRepository.count()).isEqualTo(1);
     }
 
     private long stock(Long productId) {
