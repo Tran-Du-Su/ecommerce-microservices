@@ -42,4 +42,16 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
     }
+
+    // 409, not 404 or 5xx: a definite answer about this order, so order-service must not retry it
+    @ExceptionHandler(ReservationReleasedException.class)
+    public ResponseEntity<Map<String, Object>> handlerReservationReleased(ReservationReleasedException ex) {
+        Map<String, Object> body = Map.of(
+                "timestamp", Instant.now().toString(),
+                "status", 409,
+                "error", "Conflict",
+                "message", ex.getMessage());
+
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(body);
+    }
 }

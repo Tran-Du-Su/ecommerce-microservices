@@ -3,14 +3,15 @@ package com.ecommerce.inventoryservice.service;
 import com.ecommerce.inventoryservice.exception.InventoryAlreadyExistsException;
 import com.ecommerce.inventoryservice.exception.InventoryNotFoundException;
 import com.ecommerce.inventoryservice.exception.OutOfStockException;
+import com.ecommerce.inventoryservice.exception.ReservationReleasedException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import com.ecommerce.inventoryservice.dto.InventoryRequest;
@@ -98,26 +99,32 @@ public class InventoryService {
      * {@link OrderReservation} and does nothing. A concurrent repeat waits on its unique key, then
      * collides and rolls back, leaving the first one's reservation as the single outcome.
      *
+     * <p>Refused if the order was released first (a {@code RELEASED} tombstone): the compensation
+     * has already run, so stock taken now would stay held forever.
+     *
      * <p>Not {@code @Transactional}: the duplicate-key error can only be caught after its
      * transaction has rolled back, so the transaction is opened inside, by the template.
      *
-     * @throws OutOfStockException if one product lacks stock; nothing is taken then
+     * @throws OutOfStockException          if one product lacks stock; nothing is taken then
+     * @throws ReservationReleasedException if the order was already released; nothing is taken
      */
     public void reserve(Long orderId, List<StockCheckItem> items) {
         try {
             transactionTemplate.executeWithoutResult(status -> reserveOnce(orderId, items));
         } catch (DataIntegrityViolationException e) {
-            // Only "another call reserved this order first" is a repeat; anything else (e.g. the
-            // same product twice in one request) is a real error
-            if (!orderReservationRepository.existsByOrderId(orderId)) {
-                throw e;
-            }
+            // Lost the insert to a call that committed first: a repeat of this reserve, or a release
+            // that left a tombstone. Anything else (e.g. the same product twice) is a real error.
+            OrderReservation winner = orderReservationRepository.findByOrderId(orderId).orElseThrow(() -> e);
+            refuseIfReleased(winner);
         }
     }
 
     private void reserveOnce(Long orderId, List<StockCheckItem> items) {
-        if (orderReservationRepository.existsByOrderId(orderId)) {
-            return; // shortcut for a sequential repeat; concurrent ones are stopped by the insert below
+        Optional<OrderReservation> existing = orderReservationRepository.findByOrderId(orderId);
+        if (existing.isPresent()) {
+            // Shortcut for a sequential repeat or a late reserve; concurrent ones are stopped by the insert below
+            refuseIfReleased(existing.get());
+            return;
         }
         // Claim the order id BEFORE taking any stock: another Saga call for the same order now waits
         // on this unique key until this transaction ends. Flushed so the check happens here.
@@ -132,16 +139,41 @@ public class InventoryService {
                 });
     }
 
+    private static void refuseIfReleased(OrderReservation reservation) {
+        if (reservation.getStatus() == OrderReservation.Status.RELEASED) {
+            throw new ReservationReleasedException(reservation.getOrderId());
+        }
+    }
+
     /**
      * Saga compensation: returns exactly what {@link #reserve} took for the order.
      *
      * <p>Idempotent: each reservation can move from {@code RESERVED} to {@code RELEASED} only once,
-     * and only the call that makes that move returns the stock. An order with no reservation (its
-     * reserve never ran, or failed) is a no-op, so the caller may compensate a step whose outcome
-     * it does not know.
+     * and only the call that makes that move returns the stock. An order with nothing reserved
+     * returns no stock, so the caller may compensate a step whose outcome it does not know.
+     *
+     * <p>But that order gets a tombstone: its reserve may still be on the way (a request the
+     * caller stopped waiting for), and must be refused when it arrives.
      */
-    @Transactional
     public void release(Long orderId) {
+        try {
+            transactionTemplate.executeWithoutResult(status -> releaseOnce(orderId));
+        } catch (DataIntegrityViolationException e) {
+            // The tombstone lost to a reserve (or a release) of this order that committed first.
+            // Run once more: the order row now exists, so the retry inserts nothing and returns
+            // whatever that reserve took.
+            transactionTemplate.executeWithoutResult(status -> releaseOnce(orderId));
+        }
+    }
+
+    private void releaseOnce(Long orderId) {
+        if (!orderReservationRepository.existsByOrderId(orderId)) {
+            // Nothing reserved yet: leave the tombstone. Inserted on the same unique key as reserve,
+            // so a reserve running right now either waits for it and is refused, or committed first
+            // and makes this insert fail.
+            orderReservationRepository.saveAndFlush(OrderReservation.tombstone(orderId));
+            return;
+        }
         for (StockReservation reservation : reservationRepository.findByOrderIdOrderByProductIdAsc(orderId)) {
             int transitioned = reservationRepository.transitionStatus(reservation.getId(),
                     StockReservation.Status.RESERVED, StockReservation.Status.RELEASED);

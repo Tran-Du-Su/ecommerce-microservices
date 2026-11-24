@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,7 +24,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.ecommerce.inventoryservice.dto.StockCheckItem;
 import com.ecommerce.inventoryservice.entity.Inventory;
+import com.ecommerce.inventoryservice.entity.OrderReservation;
 import com.ecommerce.inventoryservice.exception.OutOfStockException;
+import com.ecommerce.inventoryservice.exception.ReservationReleasedException;
 import com.ecommerce.inventoryservice.repository.InventoryRepository;
 import com.ecommerce.inventoryservice.repository.OrderReservationRepository;
 import com.ecommerce.inventoryservice.repository.StockReservationRepository;
@@ -88,6 +93,52 @@ class StockReservationTest {
         assertThat(stock(PRODUCT_ID)).isEqualTo(10L);
     }
 
+    /** The order-131 bug: the job compensated while the request's reserve was still on its way. */
+    @Test
+    void reserve_shouldBeRefused_whenOrderWasReleasedFirst() {
+        inventoryService.release(ORDER_ID);
+
+        assertThatThrownBy(() -> inventoryService.reserve(ORDER_ID, List.of(new StockCheckItem(PRODUCT_ID, 3L))))
+                .isInstanceOf(ReservationReleasedException.class);
+
+        assertThat(stock(PRODUCT_ID)).isEqualTo(10L);
+        assertThat(reservationRepository.count()).isZero();
+        assertThat(orderReservationRepository.findByOrderId(ORDER_ID).orElseThrow().getStatus())
+                .isEqualTo(OrderReservation.Status.RELEASED);
+    }
+
+    /**
+     * Release and reserve of the same order, started together, many times. Whichever wins, no stock
+     * may stay held: either the reserve is refused, or it commits first and the release returns it.
+     */
+    @Test
+    void releaseAndReserve_racing_shouldNeverLeaveStockHeld() throws Exception {
+        AtomicInteger refused = new AtomicInteger();
+        for (long orderId = 1000; orderId < 1050; orderId++) {
+            long id = orderId;
+            AtomicBoolean reserveRefused = new AtomicBoolean();
+            runTogether(
+                    () -> inventoryService.release(id),
+                    () -> {
+                        try {
+                            inventoryService.reserve(id, List.of(new StockCheckItem(PRODUCT_ID, 3L)));
+                        } catch (ReservationReleasedException e) {
+                            reserveRefused.set(true); // release won: an expected outcome
+                        }
+                    });
+
+            assertThat(stock(PRODUCT_ID)).as("stock after order %d", id).isEqualTo(10L);
+            // A reserve that returns normally tells order-service the stock is held: it must really be
+            boolean reserved = !reservationRepository.findByOrderIdOrderByProductIdAsc(id).isEmpty();
+            assertThat(reserved).as("order %d reserved", id).isEqualTo(!reserveRefused.get());
+            if (reserveRefused.get()) {
+                refused.incrementAndGet();
+            }
+        }
+        // Not asserted (timing decides), printed to show both branches ran
+        System.out.println("race outcomes: reserve refused " + refused.get() + "/50");
+    }
+
     @Test
     void reserve_shouldTakeNothing_whenOneProductIsShort() {
         List<StockCheckItem> items = List.of(new StockCheckItem(PRODUCT_ID, 3L),
@@ -135,10 +186,15 @@ class StockReservationTest {
 
     /** Starts the task on {@link #THREADS} threads at once; any exception in a thread fails the test. */
     private void runConcurrently(Runnable task) throws Exception {
-        ExecutorService executor = Executors.newFixedThreadPool(THREADS);
+        runTogether(Collections.nCopies(THREADS, task).toArray(Runnable[]::new));
+    }
+
+    /** Starts each task on its own thread at once; any exception in a thread fails the test. */
+    private void runTogether(Runnable... tasks) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(tasks.length);
         CountDownLatch startGate = new CountDownLatch(1);
         List<Future<?>> futures = new ArrayList<>();
-        for (int i = 0; i < THREADS; i++) {
+        for (Runnable task : tasks) {
             futures.add(executor.submit(() -> {
                 startGate.await();
                 task.run();

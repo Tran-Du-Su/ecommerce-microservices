@@ -55,9 +55,23 @@ public class OrderReservation {
      * @return a new row in {@code RESERVED}, not yet persisted
      */
     public static OrderReservation reserved(Long orderId) {
+        return of(orderId, Status.RESERVED);
+    }
+
+    /**
+     * A tombstone: the order was released before anything was reserved for it. Kept so that a
+     * reserve arriving late is refused instead of holding stock that no release will ever return.
+     *
+     * @return a new row in {@code RELEASED}, not yet persisted
+     */
+    public static OrderReservation tombstone(Long orderId) {
+        return of(orderId, Status.RELEASED);
+    }
+
+    private static OrderReservation of(Long orderId, Status status) {
         OrderReservation reservation = new OrderReservation();
         reservation.orderId = orderId;
-        reservation.status = Status.RESERVED;
+        reservation.status = status;
         reservation.createdAt = Instant.now();
         return reservation;
     }
